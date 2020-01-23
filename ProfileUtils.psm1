@@ -123,7 +123,9 @@ function Add-ToPath {
     Param(
         [Parameter(ValueFromPipeline = $true, Mandatory = $true)]
         [ValidateScript( { Test-Path ([Path]::GetFullPath($_)) })]
-        [String]$Path
+        [String]$Path,
+        [ValidateSet("CurrentSession", "Global")]
+        [string]$Scope = "CurrentSession"
     )
     DynamicParam {
         $ParamDictionary = [RuntimeDefinedParameterDictionary]::new()
@@ -141,14 +143,31 @@ function Add-ToPath {
             $Target = "User"
         }
         [String]$Path = [Path]::GetFullPath($Path)
+    }
+    Process {
         [EnvironmentVariableTarget]$ResolvedTarget = [EnvironmentVariableTarget]::$Target
-        [string]$CurrentPath = [Environment]::GetEnvironmentVariable("Path", $ResolvedTarget)
+        [string]$CurrentPath = switch($Scope) {
+            CurrentUser {
+                ([EnvironmentVariableTarget].GetEnumNames() |
+                ForEach-Object { [Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::$_) }) -join ";"
+            }
+            Global {
+                [Environment]::GetEnvironmentVariable("Path", $ResolvedTarget)
+            }
+        }
         if ($CurrentPath.ToLower().Split(';') -contains $Path.ToLower()) {
             throw "Path for $Target already contains $Path"
         }
-    }
-    Process {
-        [Environment]::SetEnvironmentVariable("Path", $CurrentPath + ";$Path", $ResolvedTarget)
+        switch($Scope) {
+            CurrentSession {
+                Write-Verbose "Adding $Path to `$Env:Path"
+                $Env:Path = $CurrentPath + ";$Path"
+            }
+            Global {
+                Write-Verbose "Adding $Path to %PATH%"
+                [Environment]::SetEnvironmentVariable("Path", $CurrentPath + ";$Path", $ResolvedTarget)
+            }
+        }
     }
 }
 
@@ -255,7 +274,7 @@ function Test-Administrator {
     [CmdletBinding()]
     Param ()
     Process {
-        return ([WindowsPrincipal][WindowsIdentity]::GetCurrent()).IsInRole([WindowsBuiltInRole] "Administrator")
+        return ([System.Security.Principal.WindowsPrincipal][System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole] "Administrator")
     }
 }
 function Compare-ObjectProperties {
@@ -344,13 +363,6 @@ $Drives |
 $ReleasesDirectory = $DriveMaps["Releases"].UncPath
 $NddResourcesDirectory = $DriveMaps["testcase-repo"].PrependUncPath("\Active\Resources")
 
-$Vms = @{
-    "lexmultidomains3.lab.opentext.com" = @{
-        ip            = "10.21.86.162"
-        remoteSession = $null
-    }
-} | ForEach-Object { ([PSCustomObject]$_) }
-
 Export-ModuleMember -Function *-* `
-    -Variable ReleasesDirectory, NddResourcesDirectory, DriveMaps, Vms `
+    -Variable ReleasesDirectory, NddResourcesDirectory, DriveMaps `
     -Alias *
